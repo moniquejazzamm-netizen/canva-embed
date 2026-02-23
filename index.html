@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="de" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minimalist Map Poster</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&amp;display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    
+    .leaflet-control-zoom,
+    .leaflet-control-attribution,
+    .leaflet-control {
+      display: none !important;
+    }
+    
+    .grayscale-map {
+      filter: grayscale(100%) contrast(1.1);
+    }
+    
+    .heart-marker {
+      font-size: 32px;
+      line-height: 1;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .a4-poster {
+      width: 210mm;
+      max-width: 100%;
+      aspect-ratio: 210 / 297;
+      background: white;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    }
+    
+    @media print {
+      .no-print {
+        display: none !important;
+      }
+      .a4-poster {
+        box-shadow: none;
+        width: 210mm;
+        height: 297mm;
+      }
+    }
+  </style>
+  <style>body { box-sizing: border-box; }</style>
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+ </head>
+ <body class="h-full bg-gray-900 overflow-hidden">
+  <div class="h-full w-full flex flex-col items-center justify-center"><!-- A4 Poster vollbild -->
+   <div class="a4-poster rounded-lg overflow-hidden flex flex-col cursor-pointer relative" id="mapContainer"><!-- Titel-Bereich -->
+    <div id="titleArea" class="bg-white py-4 text-center hidden">
+     <h2 id="posterTitle" class="text-2xl text-gray-800" style="font-family: 'Playfair Display', serif;"></h2>
+    </div><!-- Karten-Bereich -->
+    <div id="map" class="grayscale-map flex-1 bg-gray-200 flex items-center justify-center relative">
+     <div class="text-center text-gray-500 p-8">
+      <div class="text-6xl mb-4">
+       📍
+      </div>
+      <p class="text-lg" style="font-family: 'Playfair Display', serif;">Klick hier um Koordinaten einzugeben</p>
+      <p class="text-sm mt-2">um deine persönliche Karte zu erstellen</p>
+     </div>
+    </div>
+   </div><!-- Modal für Eingabe -->
+   <div id="inputModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md mx-4">
+     <h1 class="text-2xl font-semibold text-gray-800 mb-6" style="font-family: 'Playfair Display', serif;">Koordinaten eingeben</h1>
+     <form id="coordForm" class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+       <div><label for="lat" class="block text-sm font-medium text-gray-700 mb-1">Breitengrad (Lat)</label> <input type="text" id="lat" placeholder="z.B. 52.5200" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-transparent transition">
+       </div>
+       <div><label for="lng" class="block text-sm font-medium text-gray-700 mb-1">Längengrad (Lng)</label> <input type="text" id="lng" placeholder="z.B. 13.4050" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-transparent transition">
+       </div>
+      </div>
+      <div><label for="zoom" class="block text-sm font-medium text-gray-700 mb-1">Zoom-Stufe</label> <input type="range" id="zoom" min="12" max="18" value="15" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500">
+       <div class="flex justify-between text-xs text-gray-500 mt-1"><span>Übersicht</span> <span>Detail</span>
+       </div>
+      </div>
+      <div class="flex gap-3">
+       <button type="button" class="flex-1 bg-gray-300 text-gray-800 py-3 px-6 rounded-lg font-medium hover:bg-gray-400 transition" id="closeBtn"> Abbrechen </button> <button type="submit" class="flex-1 bg-gray-900 text-white py-3 px-6 rounded-lg font-medium hover:bg-gray-800 transition"> Karte anzeigen </button>
+      </div>
+     </form>
+     <p class="text-xs text-gray-500 mt-4 text-center">Tipp: Koordinaten findest du auf Google Maps per Rechtsklick</p>
+    </div>
+   </div>
+  </div>
+  <script>
+    const defaultConfig = {
+      poster_title: '',
+      primary_color: '#1f2937',
+      accent_color: '#ef4444'
+    };
+
+    let map = null;
+    let marker = null;
+    let mapInitialized = false;
+
+    // Element SDK initialisieren
+    if (window.elementSdk) {
+      window.elementSdk.init({
+        defaultConfig,
+        onConfigChange: async (config) => {
+          const title = config.poster_title || defaultConfig.poster_title;
+          const titleArea = document.getElementById('titleArea');
+          const posterTitle = document.getElementById('posterTitle');
+          
+          if (title && title.trim()) {
+            posterTitle.textContent = title;
+            titleArea.classList.remove('hidden');
+          } else {
+            titleArea.classList.add('hidden');
+          }
+        },
+        mapToCapabilities: (config) => ({
+          recolorables: [],
+          borderables: [],
+          fontEditable: undefined,
+          fontSizeable: undefined
+        }),
+        mapToEditPanelValues: (config) => new Map([
+          ['poster_title', config.poster_title || defaultConfig.poster_title]
+        ])
+      });
+    }
+
+    // Herz-Icon für Leaflet
+    function createHeartIcon() {
+      return L.divIcon({
+        html: '<div style="font-size:32px;line-height:1;color:#ff0000;">❤</div>',
+        className: 'heart-icon',
+        iconSize: [32, 32],
+        iconAnchor: [16, 32]
+      });
+    }
+
+    // Karte initialisieren oder aktualisieren
+    function showMap(lat, lng, zoom) {
+      const mapContainer = document.getElementById('map');
+      
+      // Platzhalter entfernen und Karte initialisieren
+      if (!mapInitialized) {
+        mapContainer.innerHTML = '';
+        
+        map = L.map('map', {
+          zoomControl: false,
+          attributionControl: false,
+          dragging: true,
+          scrollWheelZoom: false,
+          doubleClickZoom: false,
+          touchZoom: false
+        }).setView([lat, lng], zoom);
+        
+        // Schwarz-Weiß Karten-Layer (Stamen Toner oder CartoDB Positron)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19
+        }).addTo(map);
+        
+        mapInitialized = true;
+      } else {
+        map.setView([lat, lng], zoom);
+      }
+      
+      // Marker aktualisieren
+      if (marker) {
+        marker.setLatLng([lat, lng]);
+      } else {
+        marker = L.marker([lat, lng], {
+          icon: createHeartIcon()
+        }).addTo(map);
+      }
+    }
+
+    // Modal öffnen und schließen
+    const mapContainer = document.getElementById('mapContainer');
+    const inputModal = document.getElementById('inputModal');
+    const closeBtn = document.getElementById('closeBtn');
+
+    mapContainer.addEventListener('click', function() {
+      inputModal.classList.remove('hidden');
+    });
+
+    closeBtn.addEventListener('click', function() {
+      inputModal.classList.add('hidden');
+    });
+
+    inputModal.addEventListener('click', function(e) {
+      if (e.target === this) {
+        this.classList.add('hidden');
+      }
+    });
+
+    // Formular-Handler
+    document.getElementById('coordForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      const latInput = document.getElementById('lat').value.trim().replace(',', '.');
+      const lngInput = document.getElementById('lng').value.trim().replace(',', '.');
+      const zoom = parseInt(document.getElementById('zoom').value);
+      
+      const lat = parseFloat(latInput);
+      const lng = parseFloat(lngInput);
+      
+      if (isNaN(lat) || isNaN(lng)) {
+        // Inline Fehlermeldung
+        const form = document.getElementById('coordForm');
+        let errorMsg = form.querySelector('.error-msg');
+        if (!errorMsg) {
+          errorMsg = document.createElement('p');
+          errorMsg.className = 'error-msg text-red-500 text-sm text-center mt-2';
+          form.appendChild(errorMsg);
+        }
+        errorMsg.textContent = 'Bitte gültige Koordinaten eingeben (z.B. 52.5200, 13.4050)';
+        setTimeout(() => errorMsg.remove(), 3000);
+        return;
+      }
+      
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        const form = document.getElementById('coordForm');
+        let errorMsg = form.querySelector('.error-msg');
+        if (!errorMsg) {
+          errorMsg = document.createElement('p');
+          errorMsg.className = 'error-msg text-red-500 text-sm text-center mt-2';
+          form.appendChild(errorMsg);
+        }
+        errorMsg.textContent = 'Koordinaten außerhalb des gültigen Bereichs';
+        setTimeout(() => errorMsg.remove(), 3000);
+        return;
+      }
+      
+      showMap(lat, lng, zoom);
+      inputModal.classList.add('hidden');
+    });
+
+    // Zoom-Slider live Update
+    document.getElementById('zoom').addEventListener('input', function() {
+      if (mapInitialized && map) {
+        map.setZoom(parseInt(this.value));
+      }
+    });
+
+    // Drucken-Button
+    document.getElementById('printBtn').addEventListener('click', function() {
+      window.print();
+    });
+
+    // Beispiel-Koordinaten (Berlin) beim Start
+    document.getElementById('lat').value = '52.5200';
+    document.getElementById('lng').value = '13.4050';
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9d1feb55502e210f',t:'MTc3MTc3ODM2My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
